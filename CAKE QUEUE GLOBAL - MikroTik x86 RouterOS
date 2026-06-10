@@ -1,0 +1,120 @@
+# ==========================================================
+# CAKE QUEUE GLOBAL - MikroTik x86 RouterOS v7.17.2
+# Topologi:
+# vlan701       = uplink internet
+# vlan400-PPPoE = VLAN PPPoE via OLT HSGQ
+# vlan401-HS    = VLAN Hotspot
+# ==========================================================
+
+
+# ==========================================================
+# 1. Interface Queue - Multi Queue untuk x86 multi-core
+# ==========================================================
+
+/queue interface
+set [find interface="ether1-TMD"] queue=multi-queue-ethernet-default
+set [find interface="ether2-OLT"] queue=multi-queue-ethernet-default
+
+
+# ==========================================================
+# 2. Queue Type CAKE
+# Upload dan download dibuat simetris 475 Mbps
+# Limit bandwidth CAKE diatur di cake-bandwidth, bukan max-limit Queue Tree
+# ==========================================================
+
+/queue type
+remove [find name="cake-upload-vlan701"]
+remove [find name="cake-download-vlan701"]
+
+add name=cake-upload-vlan701 kind=cake \
+    cake-bandwidth=475M \
+    cake-diffserv=diffserv4 \
+    cake-flowmode=dual-srchost \
+    cake-nat=yes \
+    cake-rtt=100ms \
+    cake-overhead=38 \
+    cake-mpu=64
+
+add name=cake-download-vlan701 kind=cake \
+    cake-bandwidth=475M \
+    cake-diffserv=diffserv4 \
+    cake-flowmode=dual-dsthost \
+    cake-nat=yes \
+    cake-rtt=100ms \
+    cake-overhead=38 \
+    cake-mpu=64
+
+
+# ==========================================================
+# 3. PPP Profile otomatis masuk address-list CLIENT-IP
+# Profile expired / isolir tidak dimasukkan
+# ==========================================================
+
+/ppp profile
+set [find name="IP Fiberoptic"] address-list=CLIENT-IP
+set [find name="IP corporate"] address-list=CLIENT-IP
+set [find name="IP 40.1"] address-list=CLIENT-IP
+set [find name="IP Rumahan"] address-list=CLIENT-IP
+set [find name="IP 99.1"] address-list=CLIENT-IP
+set [find name="IP Paket 2Mbps"] address-list=CLIENT-IP
+set [find name="IP Mitra UMKM"] address-list=CLIENT-IP
+
+
+# ==========================================================
+# 4. Address-list manual untuk Hotspot
+# Ganti subnet di bawah ini sesuai IP pool Hotspot Bapak
+# Jika Hotspot tidak perlu dimasukkan, baris ini boleh dihapus
+# ==========================================================
+
+# CONTOH SAJA - sesuaikan dengan pool hotspot asli
+# /ip firewall address-list
+# add list=CLIENT-IP address=192.168.50.0/24 comment="Pool Hotspot vlan401-HS"
+
+
+# ==========================================================
+# 5. Hapus mangle lama untuk packet-mark CAKE
+# ==========================================================
+
+/ip firewall mangle
+remove [find new-packet-mark="client-upload"]
+remove [find new-packet-mark="client-download"]
+
+
+# ==========================================================
+# 6. Mangle packet-mark berdasarkan IP pelanggan
+# Cara ini paling cocok untuk PPPoE dynamic interface
+# ==========================================================
+
+/ip firewall mangle
+add chain=forward src-address-list=CLIENT-IP out-interface=vlan701 \
+    action=mark-packet new-packet-mark=client-upload passthrough=no \
+    comment="CAKE UPLOAD PPPoE/Hotspot CLIENT-IP ke vlan701"
+
+add chain=forward dst-address-list=CLIENT-IP in-interface=vlan701 \
+    action=mark-packet new-packet-mark=client-download passthrough=no \
+    comment="CAKE DOWNLOAD vlan701 ke PPPoE/Hotspot CLIENT-IP"
+
+
+# ==========================================================
+# 7. Queue Tree CAKE
+# max-limit dibuat 0 karena limit utama ada di cake-bandwidth
+# ==========================================================
+
+/queue tree
+remove [find name="CAKE-UPLOAD-vlan701"]
+remove [find name="CAKE-DOWNLOAD-vlan701"]
+
+add name="CAKE-UPLOAD-vlan701" parent=global packet-mark=client-upload \
+    queue=cake-upload-vlan701 limit-at=0 max-limit=0 priority=8
+
+add name="CAKE-DOWNLOAD-vlan701" parent=global packet-mark=client-download \
+    queue=cake-download-vlan701 limit-at=0 max-limit=0 priority=8
+
+
+# ==========================================================
+# 8. Pastikan FastTrack dimatikan
+# Queue CAKE tidak optimal kalau FastTrack aktif
+# ==========================================================
+
+/ip firewall filter
+disable [find action=fasttrack-connection]
