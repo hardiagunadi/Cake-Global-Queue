@@ -5,7 +5,7 @@
 # Uplink Internet : VLAN-712_INET
 # Distribusi LAN  : bridge1-Distribusi
 # Hotspot Pool    : 172.16.0.0/19
-# PPPoE Profile   : MixRadius / Rafen
+# PPPoE Profile   : Rafen
 #
 # CAKE awal       : 90M upload / 90M download
 # ==========================================================
