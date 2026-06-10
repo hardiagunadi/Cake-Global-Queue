@@ -1,0 +1,130 @@
+# ==========================================================
+# FINAL CAKE CONFIG - MIKROTIK JALUR WIRELESS
+# RouterOS v7.15.1 - RB1100AHx2
+#
+# Uplink Internet : VLAN-712_INET
+# Distribusi LAN  : bridge1-Distribusi
+# Hotspot Pool    : 172.16.0.0/19
+# PPPoE Profile   : MixRadius / Rafen
+#
+# CAKE awal       : 90M upload / 90M download
+# ==========================================================
+
+
+# ==========================================================
+# 1. Interface Queue
+# ==========================================================
+# Jika interface fisik uplink mendukung multi-queue, aktifkan.
+# Abaikan jika muncul error karena nama interface tidak ada.
+
+/queue interface
+set [find interface="ether6_TMD_INET"] queue=multi-queue-ethernet-default
+
+
+# ==========================================================
+# 2. Queue Type CAKE
+# ==========================================================
+# Limit utama CAKE diatur di cake-bandwidth.
+# Queue Tree nanti max-limit tetap 0.
+
+/queue type
+remove [find name="cake-upload-vlan712"]
+remove [find name="cake-download-vlan712"]
+
+add name=cake-upload-vlan712 kind=cake \
+    cake-bandwidth=90M \
+    cake-diffserv=diffserv4 \
+    cake-flowmode=dual-srchost \
+    cake-nat=yes \
+    cake-rtt=100ms \
+    cake-overhead=38 \
+    cake-mpu=64
+
+add name=cake-download-vlan712 kind=cake \
+    cake-bandwidth=90M \
+    cake-diffserv=diffserv4 \
+    cake-flowmode=dual-dsthost \
+    cake-nat=yes \
+    cake-rtt=100ms \
+    cake-overhead=38 \
+    cake-mpu=64
+
+
+# ==========================================================
+# 3. PPP Profile Masuk Address-List CLIENT-WIRELESS
+# ==========================================================
+# Profile pelanggan normal dimasukkan ke CLIENT-WIRELESS.
+# Profile expired dan isolir tidak dimasukkan.
+
+/ppp profile
+set [find name="IP Fiberoptic"] address-list=CLIENT-WIRELESS
+set [find name="IP Mitra UMKM"] address-list=CLIENT-WIRELESS
+set [find name="IP Paket 2Mbps"] address-list=CLIENT-WIRELESS
+set [find name="IP Rumahan"] address-list=CLIENT-WIRELESS
+set [find name="IP corporate"] address-list=CLIENT-WIRELESS
+set [find name="IP 40.1"] address-list=CLIENT-WIRELESS
+set [find name="IP 99.1"] address-list=CLIENT-WIRELESS
+set [find name="Remote"] address-list=CLIENT-WIRELESS
+set [find name="FASTRACK"] address-list=CLIENT-WIRELESS
+
+
+# ==========================================================
+# 4. Address-List Hotspot
+# ==========================================================
+# Pool Hotspot / distribusi bridge1-Distribusi = 172.16.0.0/19
+
+/ip firewall address-list
+remove [find list="CLIENT-WIRELESS" address="172.16.0.0/19"]
+
+add list=CLIENT-WIRELESS address=172.16.0.0/19 \
+    comment="Pool Hotspot bridge1-Distribusi"
+
+
+# ==========================================================
+# 5. Hapus Mangle Lama CAKE Wireless Jika Ada
+# ==========================================================
+
+/ip firewall mangle
+remove [find new-packet-mark="wireless-upload"]
+remove [find new-packet-mark="wireless-download"]
+
+
+# ==========================================================
+# 6. Mangle Upload dan Download
+# ==========================================================
+# Upload   : client wireless/hotspot/pppoe -> VLAN-712_INET
+# Download : VLAN-712_INET -> client wireless/hotspot/pppoe
+
+/ip firewall mangle
+add chain=forward src-address-list=CLIENT-WIRELESS out-interface=VLAN-712_INET \
+    action=mark-packet new-packet-mark=wireless-upload passthrough=no \
+    comment="CAKE UPLOAD Wireless Hotspot+PPPoE ke VLAN-712_INET"
+
+add chain=forward dst-address-list=CLIENT-WIRELESS in-interface=VLAN-712_INET \
+    action=mark-packet new-packet-mark=wireless-download passthrough=no \
+    comment="CAKE DOWNLOAD VLAN-712_INET ke Wireless Hotspot+PPPoE"
+
+
+# ==========================================================
+# 7. Queue Tree CAKE
+# ==========================================================
+# max-limit=0 karena bandwidth diatur di Queue Type CAKE.
+
+/queue tree
+remove [find name="CAKE-UPLOAD-vlan712"]
+remove [find name="CAKE-DOWNLOAD-vlan712"]
+
+add name="CAKE-UPLOAD-vlan712" parent=global packet-mark=wireless-upload \
+    queue=cake-upload-vlan712 limit-at=0 max-limit=0 priority=8
+
+add name="CAKE-DOWNLOAD-vlan712" parent=global packet-mark=wireless-download \
+    queue=cake-download-vlan712 limit-at=0 max-limit=0 priority=8
+
+
+# ==========================================================
+# 8. Disable FastTrack
+# ==========================================================
+# CAKE tidak optimal jika FastTrack aktif.
+
+/ip firewall filter
+disable [find action=fasttrack-connection]
